@@ -1,0 +1,25 @@
+
+# === Terraform ===
+.terraform/
+*.tfstate
+*.tfstate.*
+
+# Lock files SHOULD be committed — they pin provider versions for reproducibility.
+# Only ignore if you are intentionally managing provider versions a different way.
+# .terraform.lock.hcl
+
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Ignore tfvars (may contain sensitive values), but keep examples for reference.
+*.tfvars
+!*.tfvars.example
+
+# === macOS ===
+.DS_Store
+.AppleDouble
+.LSOverride
