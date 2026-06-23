@@ -9,11 +9,12 @@ This document describes the technical design for an enterprise-grade AWS Landing
 | Item                 | State                                                                                                            |
 | -------------------- | ---------------------------------------------------------------------------------------------------------------- |
 | AWS Control Tower    | Deployed                                                                                                         |
-| AWS Organization OUs | Root, Sandbox, Workloads, Workloads-NonProd, Workloads-Prod, Security                                            |
+| AWS Organization OUs | Root, Security, Sandbox, Workloads (containing Workloads-NonProd, Workloads-Prod), Infrastructure                |
 | Default CT accounts  | Management, Log Archive, Audit                                                                                   |
-| Provisioned accounts | 1 × Sandbox (created via Console Account Factory; resources verified)                                            |
+| Provisioned accounts | 1 × Sandbox, 1 × Networking (Infrastructure OU), 1 × SharedServices (Infrastructure OU)                          |
 | Identity federation  | IAM Identity Center enabled; Entra ID SAML/SCIM **not yet configured in this environment** (explored separately) |
 | Budget constraint    | ~$40 free-tier credit                                                                                            |
+| IaC state backend    | S3 bucket + DynamoDB lock table provisioned in Management Account (ap-south-1) via bootstrap Terraform           |
 
 ### Design Principles
 
@@ -22,6 +23,32 @@ This document describes the technical design for an enterprise-grade AWS Landing
 - **IaC-everywhere**: Terraform for all resource management; CloudFormation only where AWS-native (Control Tower StackSets, service-linked roles).
 - **Cost-aware**: design decisions account for the $40 credit ceiling; features such as Network Firewall and Transit Gateway are architecturally defined but marked as credit-sensitive.
 - **Idempotent pipelines**: every pipeline run produces the same end-state regardless of prior state.
+- **Learn-as-you-build**: the landing zone is built iteratively, one phase at a time, so each step is understood before the next begins.
+
+---
+
+## Phased Roadmap
+
+The landing zone is built incrementally. Each phase is self-contained, produces a working and documented outcome, and includes an ADR.
+
+| Phase | What                       | Key Deliverables                                          | Status     |
+| ----- | -------------------------- | --------------------------------------------------------- | ---------- |
+| 1     | Foundation — Control Tower | OU structure, Control Tower, baseline accounts            | ✅ Done    |
+| 2     | IaC Backend                | S3 state bucket, DynamoDB lock table, bootstrap Terraform | ✅ Done    |
+| 3     | Governance — SCPs          | Guardrail SCPs per OU, deny-root, deny-IAM-users          | 🔲 Next    |
+| 4     | Security Baseline          | CloudTrail, Config, GuardDuty, Security Hub, per-account  | 🔲 Planned |
+| 5     | Identity & SSO             | Permission sets, Entra ID assignments, MFA policy         | 🔲 Planned |
+| 6     | Networking                 | TGW, IPAM, Egress VPC, RAM sharing to Workloads OUs       | 🔲 Planned |
+| 7     | Shared Services            | DNS, monitoring, CI/CD tooling in SharedServices account  | 🔲 Planned |
+| 8     | AFT — Account Vending      | AFT control plane, automated account provisioning         | 🔲 Planned |
+| 9     | Observability              | Centralised logging, alerting, Security Hub aggregation   | 🔲 Planned |
+| 10    | Cost Governance            | Per-account budgets, tag policies, FinOps tooling         | 🔲 Planned |
+
+Each phase will generate:
+
+- Terraform code under the relevant directory
+- An ADR documenting the decision rationale
+- Updated design and tasks docs
 
 ---
 
@@ -33,37 +60,42 @@ This document describes the technical design for an enterprise-grade AWS Landing
 AWS Organization (Root)
 ├── Management Account
 │   ├── Control Tower
-│   ├── AFT Pipeline (CodePipeline)
-│   ├── IPAM (delegated to Network Hub or managed here)
-│   └── Organisation CloudTrail → Log Archive S3
+│   ├── AFT Pipeline (CodePipeline)  [Phase 3]
+│   ├── Terraform State: S3 + DynamoDB  [Phase 2 — DONE]
+│   └── Organisation CloudTrail → Log Archive S3  [Phase 5]
 │
 ├── Security OU
-│   ├── Log Archive Account
+│   ├── Log Archive Account  [provisioned by Control Tower]
 │   │   ├── CloudTrail S3 bucket (Object Lock, GOVERNANCE, 90d)
 │   │   ├── Config delivery bucket
 │   │   └── S3 server access logging enabled
-│   └── Audit Account
+│   └── Audit Account  [provisioned by Control Tower]
 │       ├── Security Hub (aggregator + delegated admin)
 │       ├── GuardDuty (delegated admin)
 │       ├── EventBridge rule: GD severity >= 7.0 → SNS
 │       └── Cross-account read-only role (SecurityEngineer)
 │
 ├── Sandbox OU
-│   └── sandbox-01 (existing)
-│       └── Security Baseline applied
+│   └── sandbox-01  [provisioned via Account Factory — DONE]
+│       └── Security Baseline  [Phase 4]
 │
-├── Workloads OU
-│   └── network-hub (to be provisioned via AFT)
-│       ├── Transit Gateway (shared via RAM → NonProd + Prod OUs)
-│       ├── Egress VPC (NAT Gateway + Network Firewall)
-│       └── IPAM pools (if delegated here)
+├── Infrastructure OU
+│   ├── Networking Account  [provisioned via Account Factory — DONE]
+│   │   ├── Transit Gateway  [Phase 6]
+│   │   ├── IPAM  [Phase 6]
+│   │   └── Centralised Egress VPC + NAT Gateway  [Phase 6]
+│   └── SharedServices Account  [provisioned via Account Factory — DONE]
+│       ├── DNS (Route 53 Resolver)  [Phase 7]
+│       └── Shared tooling (CI/CD, monitoring)  [Phase 7]
 │
-├── Workloads-NonProd OU
-│   └── (future workload accounts, vended via AFT)
-│
-└── Workloads-Prod OU
-    └── (future workload accounts, vended via AFT)
+└── Workloads OU
+    ├── Workloads-NonProd OU
+    │   └── (future workload accounts, vended via AFT)  [Phase 3+]
+    └── Workloads-Prod OU
+        └── (future workload accounts, vended via AFT)  [Phase 3+]
 ```
+
+> **Note**: Workloads-NonProd and Workloads-Prod are nested **under** Workloads OU, not directly under Root. The Infrastructure OU was added to house shared platform services — Networking and SharedServices accounts.
 
 ### AFT Pipeline Flow
 
@@ -90,8 +122,8 @@ Developer                 GitHub/CodeCommit            AFT Orchestrator (Managem
 
 ```
                     ┌─────────────────────────────────┐
-                    │       Network Hub Account        │
-                    │  Workloads OU                    │
+                    │       Networking Account         │
+                    │  Infrastructure OU               │
                     │                                  │
                     │  ┌───────────────────────────┐  │
                     │  │   Egress VPC (10.0.0.0/16) │  │
@@ -121,12 +153,12 @@ Developer                 GitHub/CodeCommit            AFT Orchestrator (Managem
 ### IPAM Pool Hierarchy
 
 ```
-IPAM (us-east-1, delegated admin or management account)
+IPAM (ap-south-1, Networking Account — Infrastructure OU)
 └── Root Pool: 10.0.0.0/8
-    ├── Management Pool:  10.0.0.0/16
-    ├── Sandbox Pool:     10.1.0.0/16
-    ├── NonProd Pool:     10.2.0.0/15  (10.2.0.0 – 10.3.255.255)
-    └── Prod Pool:        10.4.0.0/15  (10.4.0.0 – 10.5.255.255)
+    ├── Infrastructure Pool: 10.0.0.0/16   (Networking + SharedServices VPCs)
+    ├── Sandbox Pool:        10.1.0.0/16   (Sandbox developer experimentation)
+    ├── NonProd Pool:        10.2.0.0/15   (NonProd workload VPCs — 10.2.0.0–10.3.255.255)
+    └── Prod Pool:           10.4.0.0/15   (Prod workload VPCs — 10.4.0.0–10.5.255.255)
 ```
 
 ### Security Detection Flow
@@ -154,6 +186,40 @@ All member accounts
 ---
 
 ## Components and Interfaces
+
+### Component 0: Terraform State Backend (Bootstrap)
+
+**Location**: `bootstrap/terraform-backend/`
+**Phase**: 2 — DONE
+
+This is the first Terraform code to run. It creates the remote state infrastructure that all subsequent Terraform components will use. It is intentionally standalone — it has no remote backend itself (state is stored locally), and it is run once from the Management Account.
+
+Resources created:
+
+- `aws_s3_bucket` — `lz-terraform-state-{account_id}` in `ap-south-1`
+- `aws_s3_bucket_versioning` — enabled, allowing state rollback
+- `aws_s3_bucket_public_access_block` — all four flags true
+- `aws_s3_bucket_server_side_encryption_configuration` — AES-256 default encryption
+- `aws_s3_bucket_lifecycle_configuration` — expire non-current versions after 90 days
+- `aws_dynamodb_table` — `lz-terraform-locks`, PAY_PER_REQUEST, hash key `LockID`
+
+All subsequent Terraform modules reference this backend:
+
+```hcl
+terraform {
+  backend "s3" {
+    bucket         = "lz-terraform-state-506094870115"
+    key            = "<component>/terraform.tfstate"
+    region         = "ap-south-1"
+    dynamodb_table = "lz-terraform-locks"
+    encrypt        = true
+  }
+}
+```
+
+> **Why no backend for the bootstrap itself?** The bootstrap module creates the very S3 bucket that all other modules use for state. There is no bucket yet when it first runs, so it uses local state. After the bucket is created, you can optionally migrate the bootstrap state into it with `terraform init -migrate-state`.
+
+---
 
 ### Component 1: OU Governance & SCPs
 
@@ -269,11 +335,13 @@ The module iterates all enabled regions using a `for_each` over `data.aws_region
 
 ---
 
-### Component 4: Network Hub
+### Component 4: Network Hub (Networking Account)
 
 **Location**: `network/`
 
-Resources deployed into the Network Hub account:
+The Networking account lives in the **Infrastructure OU** and acts as the hub for all centralised networking. Resources deployed into this account:
+
+> **Previous design error corrected**: an earlier version placed the network hub under the Workloads OU. The correct placement is Infrastructure OU alongside SharedServices.
 
 ```hcl
 # network/transit-gateway.tf

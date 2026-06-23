@@ -1,3 +1,18 @@
 {
-    "kiroAgent.configureMCP": "Disabled"
+  "kiroAgent.configureMCP": "Disabled",
+  // Terraform files
+  "[terraform]": {
+    "editor.defaultFormatter": "hashicorp.terraform",
+    "editor.formatOnSave": true
+  },
+  // Terraform vars files
+  "[terraform-vars]": {
+    "editor.defaultFormatter": "hashicorp.terraform",
+    "editor.formatOnSave": true
+  },
+  "files.associations": { "*.tf": "terraform", "*.tfvars": "terraform-vars" },
+  // Optional: Ensure files are saved with a newline at the end
+  "files.insertFinalNewline": true,
+  // Optional: Trim trailing whitespace on save
+  "files.trimTrailingWhitespace": true
 }
