@@ -8,12 +8,12 @@ variable "region" {
   }
 }
 
-variable "account_id" {
+variable "org_id" {
   type        = string
-  description = "AWS Management Account ID. Used to create a globally unique S3 bucket name."
+  description = "AWS Organization ID. Used to scope cross-account access to the state bucket."
 
   validation {
-    condition     = can(regex("^[0-9]{12}$", var.account_id))
-    error_message = "account_id must be a 12-digit AWS account ID."
+    condition     = can(regex("^o-[a-z0-9]{10,32}$", var.org_id))
+    error_message = "org_id must be a valid AWS Organization ID, e.g. o-abc123defg."
   }
 }

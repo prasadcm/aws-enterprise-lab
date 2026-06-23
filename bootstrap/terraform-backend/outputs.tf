@@ -8,14 +8,9 @@ output "state_bucket_arn" {
   value       = aws_s3_bucket.terraform_state.arn
 }
 
-output "lock_table_name" {
-  description = "Name of the DynamoDB table used for state locking."
-  value       = aws_dynamodb_table.terraform_lock.name
-}
-
-output "lock_table_arn" {
-  description = "ARN of the DynamoDB lock table. Use this to grant IAM permissions."
-  value       = aws_dynamodb_table.terraform_lock.arn
+output "state_access_role_arn" {
+  description = "ARN of the IAM role that spoke accounts assume to access Terraform state. Use this in backend blocks with role_arn."
+  value       = aws_iam_role.terraform_state_access.arn
 }
 
 output "backend_config_snippet" {
@@ -26,8 +21,27 @@ output "backend_config_snippet" {
         bucket         = "${aws_s3_bucket.terraform_state.bucket}"
         key            = "<component>/terraform.tfstate"
         region         = "${var.region}"
-        dynamodb_table = "${aws_dynamodb_table.terraform_lock.name}"
+        use_lockfile   = true
         encrypt        = true
+      }
+    }
+  EOT
+}
+
+output "backend_config_cross_account_snippet" {
+  description = "Backend block for spoke accounts. Replace <component> with the module path."
+  value       = <<-EOT
+    terraform {
+      backend "s3" {
+        bucket       = "${aws_s3_bucket.terraform_state.bucket}"
+        key          = "<component>/terraform.tfstate"
+        region       = "${var.region}"
+        use_lockfile = true
+        encrypt      = true
+
+        assume_role = {
+          role_arn = "${aws_iam_role.terraform_state_access.arn}"
+        }
       }
     }
   EOT

@@ -1,2 +1,2 @@
-region                      = "change me"
-account_id                  = "change me"
+region  = "change me"
+org_id  = "change me"

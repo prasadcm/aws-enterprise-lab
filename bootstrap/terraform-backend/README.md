@@ -7,14 +7,13 @@ It is run **once**, manually, from the AWS Management Account before any other T
 
 ## What it creates
 
-| Resource               | Name                              | Purpose                              |
-| ---------------------- | --------------------------------- | ------------------------------------ |
-| S3 Bucket              | `lz-terraform-state-<account_id>` | Stores all Terraform state files     |
-| S3 Versioning          | enabled                           | Allows state file rollback           |
-| S3 Public Access Block | all flags true                    | Prevents public exposure of state    |
-| S3 Encryption          | AES-256                           | Encrypts state at rest               |
-| S3 Lifecycle           | 90-day non-current expiry         | Controls storage cost                |
-| DynamoDB Table         | `lz-terraform-locks`              | Prevents concurrent state corruption |
+| Resource               | Name                              | Purpose                           |
+| ---------------------- | --------------------------------- | --------------------------------- |
+| S3 Bucket              | `lz-terraform-state-<account_id>` | Stores all Terraform state files  |
+| S3 Versioning          | enabled                           | Allows state file rollback        |
+| S3 Public Access Block | all flags true                    | Prevents public exposure of state |
+| S3 Encryption          | AES-256                           | Encrypts state at rest            |
+| S3 Lifecycle           | 90-day non-current expiry         | Controls storage cost             |
 
 ## Why no remote backend here?
 
@@ -44,6 +43,9 @@ cd bootstrap/terraform-backend
 cp terraform.tfvars.example terraform.tfvars
 # Edit terraform.tfvars: set region and account_id
 
+# Login with Management Account
+aws-vault exec <management-account-profile>
+
 # Initialise (local backend on first run)
 terraform init
 
@@ -65,7 +67,7 @@ terraform {
     bucket         = "lz-terraform-state-506094870115"
     key            = "governance/scps/terraform.tfstate"
     region         = "ap-south-1"
-    dynamodb_table = "lz-terraform-locks"
+    use_lockfile   = true
     encrypt        = true
   }
 }

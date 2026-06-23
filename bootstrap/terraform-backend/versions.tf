@@ -1,5 +1,5 @@
 # This module intentionally has NO remote backend block.
-# It creates the S3 bucket and DynamoDB table that all other modules use for state.
+# It creates the S3 bucket that ball other modules use for state.
 # State for this module is stored locally in terraform.tfstate and should be committed
 # to a secure location or migrated into the bucket after initial creation:
 #

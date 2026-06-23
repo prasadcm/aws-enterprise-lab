@@ -1,6 +1,10 @@
+# Make sure you use the management account credentials when running this Terraform code,
+# as it creates the S3 bucket and IAM role that spoke accounts will rely on for state storage and access.
+data "aws_caller_identity" "current" {}
+
 # S3 bucket for Terraform state
 resource "aws_s3_bucket" "terraform_state" {
-  bucket = "lz-terraform-state-${var.account_id}"
+  bucket = "lz-terraform-state-${data.aws_caller_identity.current.account_id}"
 
   # Prevent accidental deletion of this bucket which would destroy all state files
   lifecycle {
@@ -56,19 +60,103 @@ resource "aws_s3_bucket_lifecycle_configuration" "terraform_state" {
   }
 }
 
-# DynamoDB table for state locking — prevents concurrent Terraform runs from corrupting state
-resource "aws_dynamodb_table" "terraform_lock" {
-  name         = "lz-terraform-locks"
-  billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "LockID"
+# --- Cross-account state access ---
+# IAM role that spoke accounts assume to read/write Terraform state.
+# Trust is scoped to the AWS Organization via aws:PrincipalOrgID.
+resource "aws_iam_role" "terraform_state_access" {
+  name = "lz-terraform-state-access"
 
-  attribute {
-    name = "LockID"
-    type = "S"
-  }
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Principal = {
+          AWS = "arn:aws:iam::*:root"
+        }
+        Action = "sts:AssumeRole"
+        Condition = {
+          StringEquals = {
+            "aws:PrincipalOrgID" = var.org_id
+          }
+        }
+      }
+    ]
+  })
 
-  # Protect the lock table from accidental deletion
-  lifecycle {
-    prevent_destroy = true
+  tags = {
+    Purpose = "cross-account-terraform-state"
   }
+}
+
+resource "aws_iam_role_policy" "terraform_state_access" {
+  name = "terraform-state-s3-access"
+  role = aws_iam_role.terraform_state_access.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid      = "ListStateBucket"
+        Effect   = "Allow"
+        Action   = "s3:ListBucket"
+        Resource = aws_s3_bucket.terraform_state.arn
+      },
+      {
+        Sid    = "ReadWriteStateObjects"
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:DeleteObject"
+        ]
+        Resource = "${aws_s3_bucket.terraform_state.arn}/*"
+      }
+    ]
+  })
+}
+
+# Bucket policy: only the dedicated state-access role and the management account can reach the bucket.
+resource "aws_s3_bucket_policy" "terraform_state" {
+  bucket = aws_s3_bucket.terraform_state.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "AllowStateAccessRole"
+        Effect = "Allow"
+        Principal = {
+          AWS = aws_iam_role.terraform_state_access.arn
+        }
+        Action = [
+          "s3:ListBucket",
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:DeleteObject"
+        ]
+        Resource = [
+          aws_s3_bucket.terraform_state.arn,
+          "${aws_s3_bucket.terraform_state.arn}/*"
+        ]
+      },
+      {
+        Sid    = "AllowManagementAccount"
+        Effect = "Allow"
+        Principal = {
+          AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"
+        }
+        Action = [
+          "s3:ListBucket",
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:DeleteObject"
+        ]
+        Resource = [
+          aws_s3_bucket.terraform_state.arn,
+          "${aws_s3_bucket.terraform_state.arn}/*"
+        ]
+      }
+    ]
+  })
 }

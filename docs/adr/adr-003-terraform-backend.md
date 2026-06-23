@@ -86,11 +86,16 @@ Some CI platforms provide built-in Terraform state management.
 
 ## Decision
 
-**Use S3 + DynamoDB (Option 2).**
+**Use S3 + DynamoDB (Option 2) — migrated to native S3 locking in Terraform 1.11.**
 
-This is the most widely adopted approach for Terraform state management in enterprise AWS
-environments. It keeps all infrastructure within the AWS account boundary, provides full
-versioning and locking, and can be managed in Terraform itself as part of the bootstrap phase.
+S3 + DynamoDB was the initial decision and is the most widely adopted approach for
+Terraform state management in enterprise AWS environments. It keeps all infrastructure
+within the AWS account boundary and provides full versioning and locking.
+
+**Update (Terraform 1.11):** Native S3 state locking was promoted to generally available
+in Terraform 1.11, making the DynamoDB table redundant. The `dynamodb_table` backend
+argument is now deprecated. All backend blocks in this repository have been migrated to
+`use_lockfile = true`. The DynamoDB table (`lz-terraform-locks`) has been decommissioned.
 
 ---
 
@@ -101,14 +106,18 @@ manually, before any other Terraform in this repository.
 
 ### Resources created
 
-| Resource                                             | Name                              | Purpose                         |
-| ---------------------------------------------------- | --------------------------------- | ------------------------------- |
-| `aws_s3_bucket`                                      | `lz-terraform-state-<account_id>` | Stores all state files          |
-| `aws_s3_bucket_versioning`                           | enabled                           | State file history and rollback |
-| `aws_s3_bucket_public_access_block`                  | all true                          | Prevents public exposure        |
-| `aws_s3_bucket_server_side_encryption_configuration` | AES-256                           | Encrypts state at rest          |
-| `aws_s3_bucket_lifecycle_configuration`              | 90-day non-current expiry         | Controls storage cost           |
-| `aws_dynamodb_table`                                 | `lz-terraform-locks`              | Distributed state locking       |
+| Resource                                             | Name                              | Purpose                                        |
+| ---------------------------------------------------- | --------------------------------- | ---------------------------------------------- |
+| `aws_s3_bucket`                                      | `lz-terraform-state-<account_id>` | Stores all state files                         |
+| `aws_s3_bucket_versioning`                           | enabled                           | State file history and rollback                |
+| `aws_s3_bucket_public_access_block`                  | all true                          | Prevents public exposure                       |
+| `aws_s3_bucket_server_side_encryption_configuration` | AES-256                           | Encrypts state at rest                         |
+| `aws_s3_bucket_lifecycle_configuration`              | 90-day non-current expiry         | Controls storage cost                          |
+| ~~`aws_dynamodb_table`~~                             | ~~`lz-terraform-locks`~~          | ~~Deprecated — replaced by native S3 locking~~ |
+
+> **Terraform 1.11 update**: The `aws_dynamodb_table` resource was removed from this module
+> after migrating all backend blocks to `use_lockfile = true`. Native S3 locking stores a
+> `.tflock` object directly in the state bucket — no separate AWS resource required.
 
 ### Bootstrap sequence
 
@@ -124,14 +133,17 @@ After apply, all subsequent modules use:
 ```hcl
 terraform {
   backend "s3" {
-    bucket         = "lz-terraform-state-<account_id>"
-    key            = "<component>/terraform.tfstate"
-    region         = "ap-south-1"
-    dynamodb_table = "lz-terraform-locks"
-    encrypt        = true
+    bucket       = "lz-terraform-state-<account_id>"
+    key          = "<component>/terraform.tfstate"
+    region       = "ap-south-1"
+    use_lockfile = true
+    encrypt      = true
   }
 }
 ```
+
+> **Note:** Earlier versions of this configuration used `dynamodb_table = "lz-terraform-locks"`.
+> This was deprecated in Terraform 1.11. All backend blocks have been migrated to `use_lockfile = true`.
 
 ### State key naming convention
 
