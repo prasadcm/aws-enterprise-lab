@@ -1,3 +1,11 @@
-region                      = "change me"
-sandbox_account_id          = "change me"
-notification_email          = "change me"
+region                     = "change me"
+notification_email         = "change me"
+sandbox_account_id         = "change me"
+shared_services_account_id = "change me"
+networking_account_id      = "change me"
+
+# Override defaults if needed
+# management_budget_limit      = "20"
+# sandbox_budget_limit         = "10"
+# shared_services_budget_limit = "10"
+# networking_budget_limit      = "10"

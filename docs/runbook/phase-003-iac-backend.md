@@ -261,4 +261,4 @@ At the end of this phase:
 
 ## Next Phase
 
-Phase 004 — Governance (SCPs) _(not yet started)_
+[Phase 004 — Organization Governance](./phase-004-governance.md)
