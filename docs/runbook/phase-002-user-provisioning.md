@@ -1,6 +1,7 @@
 # Phase 002 — User Provisioning (IAM Identity Center and SSO)
 
-**Status:** Pending
+**Status:** Completed
+**Date:** 2026-06-20
 **Approach:** AWS Console + local terminal
 
 ---
@@ -8,8 +9,9 @@
 ## Objective
 
 Create a permanent SSO admin user in IAM Identity Center, configure the local developer
-machine to authenticate via SSO, and retire the temporary bootstrap IAM admin user created
-in Phase 000.
+machine to authenticate via SSO, establish the `terraform-provisioner-role` pattern for
+IaC operations across all accounts, and retire the temporary bootstrap IAM admin user
+created in Phase 000.
 
 This phase depends on Phase 001 (Control Tower) because Control Tower enables IAM Identity
 Center as part of its setup.
@@ -127,32 +129,33 @@ Repeat this for any other accounts you need admin access to (e.g. Sandbox, Share
 
 ---
 
-### Activity 7 — Create the Terraform provision role in the Management Account
+### Activity 7 — Create the `terraform-provisioner-role`
 
-Terraform should never run under a human SSO session directly. Instead, create a dedicated
-IAM role that SSO users assume specifically for Terraform operations. This provides:
+Create a dedicated IAM role for Terraform operations in every account. See
+[ADR-004: Terraform Provisioner Role](../adr/adr-004-terraform-provisioner-role.md) for
+the rationale (audit clarity, separation from console access, CI/CD readiness).
 
-- **Separation of concerns** — human console access (`AdministratorAccess`) is distinct from IaC operations
-- **Audit clarity** — CloudTrail shows `AssumeRole` → `terraform-provisioner-role`, making it obvious which actions are IaC vs. manual
-- **Least-privilege path** — the role's permissions can be tightened over time without affecting console access
-- **Automation ready** — CI/CD pipelines can assume the same role, establishing a consistent identity for all Terraform runs
+This role must be created in **every account** — Management, Sandbox, SharedServices,
+Networking, and any future accounts. The trust policy differs between the management
+account and spoke accounts.
 
-#### Steps (AWS Console)
+#### Role creation steps (same for all accounts)
 
-1. Sign into the Management Account console as your SSO admin user
-2. Navigate to **IAM → Roles → Create role**
-3. Trusted entity type: **AWS account → This account** (`<MGMT_ACCOUNT_ID>`)
-4. Click **Next**
-5. Attach the **AdministratorAccess** policy (will be scoped down in a future phase)
-6. Click **Next**
-7. Role name: `terraform-provisioner-role`
-8. Description: `Role assumed by SSO users and CI/CD pipelines to run Terraform in the Management Account`
-9. Click **Create role**
+For each account, sign into the console and:
 
-#### Edit the trust policy
+1. Navigate to **IAM → Roles → Create role**
+2. Trusted entity type: **AWS account → This account**
+3. Click **Next**
+4. Attach the **AdministratorAccess** policy (will be scoped down in a future phase)
+5. Click **Next**
+6. Role name: `terraform-provisioner-role`
+7. Description: `Role assumed by SSO users and CI/CD pipelines to run Terraform`
+8. Click **Create role**
+9. Edit the trust policy (see below)
 
-After creation, edit the trust policy to restrict who can assume the role to only the SSO
-`AdministratorAccess` role (not any principal in the account):
+#### Management Account trust policy
+
+The management account role only needs to trust its own SSO user:
 
 1. Navigate to **IAM → Roles → terraform-provisioner-role → Trust relationships → Edit**
 2. Replace the trust policy with:
@@ -162,6 +165,7 @@ After creation, edit the trust policy to restrict who can assume the role to onl
   "Version": "2012-10-17",
   "Statement": [
     {
+      "Sid": "AllowLocalSSO",
       "Effect": "Allow",
       "Principal": {
         "AWS": "arn:aws:iam::<MGMT_ACCOUNT_ID>:root"
@@ -177,42 +181,95 @@ After creation, edit the trust policy to restrict who can assume the role to onl
 }
 ```
 
-3. Click **Update policy**
+#### Spoke account trust policy (Sandbox, SharedServices, Networking, etc.)
 
-> **Why `ArnLike` with a wildcard?** The SSO role name includes a random suffix that
-> varies per permission set assignment. The wildcard matches any SSO-generated
-> `AdministratorAccess` role in this account.
+Spoke accounts need a **dual-trust** policy — one statement for local SSO access, and a
+second allowing the management account's `terraform-provisioner-role` to assume this role
+for centralized governance operations (e.g. budgets module creating resources across accounts
+via provider aliases):
 
-> **Why `AdministratorAccess` on this role for now?** This is a bootstrapping phase.
-> The role will be scoped down to only the permissions Terraform needs once the landing
-> zone modules stabilise. Starting broad avoids blocking progress; the tightening is
-> tracked as a future activity.
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowLocalSSO",
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "arn:aws:iam::<THIS_ACCOUNT_ID>:root"
+      },
+      "Action": "sts:AssumeRole",
+      "Condition": {
+        "ArnLike": {
+          "aws:PrincipalArn": "arn:aws:iam::<THIS_ACCOUNT_ID>:role/aws-reserved/sso.amazonaws.com/*/AWSReservedSSO_AWSAdministratorAccess_*"
+        }
+      }
+    },
+    {
+      "Sid": "AllowManagementTerraform",
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "arn:aws:iam::<MGMT_ACCOUNT_ID>:role/terraform-provisioner-role"
+      },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}
+```
 
-#### Repeat for every new account
+Replace `<THIS_ACCOUNT_ID>` with the spoke account's own ID. `<MGMT_ACCOUNT_ID>` is the
+management account ID (same in all spoke accounts).
 
-The `terraform-provisioner-role` must be created in **every account** where Terraform will
-provision resources — not just the Management Account. When a new account is added to the
-Organization (e.g. Sandbox, SharedServices, Networking), create the role in that account
-using the same steps above, adjusting:
+> **Why the policies differ, and why `AdministratorAccess` for now?**
+> See [ADR-004: Terraform Provisioner Role](../adr/adr-004-terraform-provisioner-role.md).
 
-- **Trusted entity**: the account's own account ID (`<TARGET_ACCOUNT_ID>`)
-- **Trust policy `ArnLike`**: the SSO role ARN in that account
-  (`arn:aws:iam::<TARGET_ACCOUNT_ID>:role/aws-reserved/sso.amazonaws.com/*/AWSReservedSSO_AWSAdministratorAccess_*`)
-- **CLI profile**: add a corresponding chained profile in `~/.aws/config`:
-  ```ini
-  [profile <account>-terraform]
-  source_profile = <account>-admin
-  role_arn = arn:aws:iam::<TARGET_ACCOUNT_ID>:role/terraform-provisioner-role
-  region = ap-south-1
-  output = json
-  ```
+#### Accounts provisioned
 
-> **Checklist for new accounts:**
+| Account | Account ID | Trust type | Status |
+|---|---|---|---|
+| Management | `<MGMT_ACCOUNT_ID>` | Local SSO only | Done |
+| Sandbox | `<SANDBOX_ACCOUNT_ID>` | Dual-trust | Done |
+| SharedServices | `<SHAREDSERVICES_ACCOUNT_ID>` | Dual-trust | Done |
+| Networking | `<NETWORKING_ACCOUNT_ID>` | Dual-trust | Done |
+
+#### CLI profiles for each account
+
+Add a chained Terraform profile in `~/.aws/config` for each account:
+
+```ini
+[profile mgmt-terraform]
+source_profile = mgmt-admin
+role_arn = arn:aws:iam::<MGMT_ACCOUNT_ID>:role/terraform-provisioner-role
+region = ap-south-1
+output = json
+
+[profile sandbox-terraform]
+source_profile = sandbox-admin
+role_arn = arn:aws:iam::<SANDBOX_ACCOUNT_ID>:role/terraform-provisioner-role
+region = ap-south-1
+output = json
+
+[profile sharedservices-terraform]
+source_profile = sharedservices-admin
+role_arn = arn:aws:iam::<SHAREDSERVICES_ACCOUNT_ID>:role/terraform-provisioner-role
+region = ap-south-1
+output = json
+
+[profile networking-terraform]
+source_profile = networking-admin
+role_arn = arn:aws:iam::<NETWORKING_ACCOUNT_ID>:role/terraform-provisioner-role
+region = ap-south-1
+output = json
+```
+
+> **Checklist for future new accounts:**
 > 1. Assign `PlatformAdmins` group with `AdministratorAccess` permission set (Activity 5)
-> 2. Create `terraform-provisioner-role` in the new account (this activity)
+> 2. Create `terraform-provisioner-role` with the spoke account dual-trust policy
 > 3. Add SSO profile locally: `aws configure sso --profile <account>-admin`
 > 4. Add chained Terraform profile in `~/.aws/config`
-> 5. Verify: `aws --profile <account>-terraform sts get-caller-identity`
+> 5. Verify local access: `aws --profile <account>-terraform sts get-caller-identity`
+> 6. Verify cross-account access: from `mgmt-terraform`, confirm the management account
+>    can assume the spoke account's role
 
 ---
 
@@ -268,37 +325,17 @@ browser session. Select the Sandbox account and role when prompted.
 
 #### Step 2 — Add profile-chained Terraform profiles
 
-Open `~/.aws/config` and add the following profiles. These use `source_profile` to
-authenticate via the SSO profile, then `role_arn` to assume the Terraform provision role.
-
-```ini
-[profile mgmt-terraform]
-source_profile = mgmt-admin
-role_arn = arn:aws:iam::<MGMT_ACCOUNT_ID>:role/terraform-provisioner-role
-region = ap-south-1
-output = json
-```
+The chained Terraform profiles are documented in Activity 7. Add all of them to
+`~/.aws/config` as part of that activity.
 
 > **How profile chaining works:**
 > When you run `aws --profile mgmt-terraform sts get-caller-identity`, the CLI:
-
 > 1. Resolves `source_profile = mgmt-admin` → authenticates via SSO
 > 2. Uses those SSO credentials to call `sts:AssumeRole` on `terraform-provisioner-role`
 > 3. Returns temporary credentials scoped to the assumed role
 >
-> The result is a two-hop chain: **SSO session → AdministratorAccess → terraform-provisioner-role**.
+> The result is a two-hop chain: **SSO session → AWSAdministratorAccess → terraform-provisioner-role**.
 > CloudTrail records both hops, giving full traceability from human identity to Terraform action.
-
-> **Future accounts:** As you create `terraform-provisioner-role` in other accounts
-> (Sandbox, SharedServices, etc.), add a corresponding chained profile for each:
->
-> ```ini
-> [profile sandbox-terraform]
-> source_profile = sandbox-admin
-> role_arn = arn:aws:iam::<SANDBOX_ACCOUNT_ID>:role/terraform-provisioner-role
-> region = ap-south-1
-> output = json
-> ```
 
 ---
 
@@ -411,13 +448,14 @@ At the end of this phase:
 - SSO admin user created in IAM Identity Center
 - `PlatformAdmins` group created and user assigned
 - `AdministratorAccess` permission set created with 8-hour session duration
-- Group assigned to Management Account (and other required accounts)
-- `terraform-provisioner-role` created in Management Account with trust restricted to SSO admin role
-- SSO profiles configured locally for each account (`mgmt-admin`, `sandbox-admin`)
-- Profile-chained Terraform profiles configured (`mgmt-terraform`)
-- SSO console and CLI access verified, including profile chaining
+- Group assigned to Management Account and all spoke accounts
+- `terraform-provisioner-role` created in all accounts:
+  - Management Account — local SSO trust only
+  - Sandbox, SharedServices, Networking — dual-trust (local SSO + management account cross-account)
+- SSO profiles configured locally for each account (`mgmt-admin`, `sandbox-admin`, `sharedservices-admin`, `networking-admin`)
+- Profile-chained Terraform profiles configured (`mgmt-terraform`, `sandbox-terraform`, `sharedservices-terraform`, `networking-terraform`)
+- SSO console and CLI access verified, including profile chaining and cross-account assume
 - Bootstrap IAM admin user access keys deactivated and deleted
-- Terraform state backend bucket confirmed in the Management Account
 
 ---
 
@@ -427,4 +465,4 @@ At the end of this phase:
 
 ## Next Phase
 
-[Phase 003 — IaC State Backend](./phase-003-iac-backend.md)
+[Phase 003 — IaC State Backend (Terraform)](./phase-003-iac-backend.md)

@@ -23,3 +23,4 @@ resource "aws_budgets_budget" "this" {
     subscriber_email_addresses = [var.notification_email]
   }
 }
+
