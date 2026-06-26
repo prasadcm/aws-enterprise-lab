@@ -52,7 +52,7 @@ for why data sources are used instead of managed resources.
 
 | File                       | Purpose                                                                     |
 | -------------------------- | --------------------------------------------------------------------------- |
-| `main.tf`                  | Data sources for Organization, top-level OUs, Workloads sub-OUs, and locals |
+| `data.tf`                  | Data sources for Organization, top-level OUs, Workloads sub-OUs, and locals |
 | `outputs.tf`               | Org ID, root ID, management account ID, OU ID maps, account ID maps        |
 | `backend.tf`               | S3 backend with `assume_role` for state access                              |
 | `variables.tf`             | `region`                                                                    |
@@ -248,4 +248,4 @@ At the end of this phase:
 
 ## Next Phase
 
-Phase 005 — _(not yet planned)_
+[Phase 005 — Identity Provider (Entra ID)](./phase-005-identity-provider.md)
