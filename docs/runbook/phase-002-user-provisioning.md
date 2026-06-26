@@ -415,29 +415,63 @@ unset AWS_PROFILE
 
 ---
 
-### Activity 11 — Retire the bootstrap IAM admin user
+### Activity 11 — Create break-glass IAM user and retire bootstrap admin
+
+A break-glass IAM user provides emergency console access when SSO is unavailable (IdP
+outage, Entra ID migration, account lockout). See
+[ADR-010: Break-Glass Emergency Access](../adr/adr-010-break-glass-access.md).
 
 Once you have confirmed SSO works for both console and CLI access:
 
-1. Navigate to **IAM → Users → bootstrap-admin**
-2. Click **Security credentials** → under **Access keys** → **Deactivate** both keys
-3. Wait 24 hours and confirm nothing breaks
-4. Delete the access keys permanently
-5. Optionally delete the user entirely:
-   - **IAM → Users → bootstrap-admin → Delete**
+#### Step 1 — Create the `iam-admin` user
 
-Also remove the local CLI profile:
+1. Navigate to **IAM → Users → Add users**
+2. User name: `iam-admin`
+3. Select **Provide user access to the AWS Management Console**
+4. Select **I want to create an IAM user** (not Identity Center)
+5. Set a custom password — minimum 32 characters, randomly generated
+6. Uncheck **User must create a new password at next sign-in**
+7. Attach the `AdministratorAccess` managed policy directly
+8. Click **Create user**
 
-```bash
-# Remove from ~/.aws/credentials
-# Open the file and delete the [bootstrap-admin] section
+#### Step 2 — Enable MFA
 
-# Or use the AWS CLI
-aws configure --profile bootstrap-admin set aws_access_key_id ""
-```
+1. Navigate to **IAM → Users → iam-admin → Security credentials**
+2. Under **Multi-factor authentication (MFA)** → click **Assign MFA device**
+3. Device name: `iam-admin-mfa`
+4. Select **Virtual MFA device** (or hardware key if available)
+5. Scan the QR code with an authenticator app
+6. Enter two consecutive MFA codes and confirm
 
-> Keep the `Administrators` IAM group in place — it may be needed for emergency
-> break-glass access if SSO ever becomes unavailable.
+#### Step 3 — Store credentials securely
+
+Store the following in a secure location — password manager vault, physical safe, or
+encrypted storage:
+
+- Console sign-in URL: `https://<MGMT_ACCOUNT_ID>.signin.aws.amazon.com/console`
+- Username: `iam-admin`
+- Password: the 32+ character password
+- MFA recovery codes or device location
+
+#### Step 4 — Verify break-glass access
+
+1. Open a private/incognito browser window
+2. Navigate to the IAM console sign-in URL (not the SSO URL)
+3. Sign in as `iam-admin` with password + MFA
+4. Confirm you reach the Management Account console
+5. Sign out immediately
+
+#### Step 5 — Delete the bootstrap user
+
+1. Navigate to **IAM → Users → bootstrap-admin → Delete**
+2. Confirm deletion
+
+> **Usage policy:** The `iam-admin` user is for emergencies only — when SSO is
+> completely unavailable. Any use of this identity should trigger a post-incident review.
+> CloudTrail logs all `iam-admin` activity, making it easy to audit.
+>
+> **Maintenance:** Rotate the password every 90 days. Verify MFA device works quarterly.
+> Keep the `Administrators` IAM group in place.
 
 ---
 
@@ -455,7 +489,8 @@ At the end of this phase:
 - SSO profiles configured locally for each account (`mgmt-admin`, `sandbox-admin`, `sharedservices-admin`, `networking-admin`)
 - Profile-chained Terraform profiles configured (`mgmt-terraform`, `sandbox-terraform`, `sharedservices-terraform`, `networking-terraform`)
 - SSO console and CLI access verified, including profile chaining and cross-account assume
-- Bootstrap IAM admin user access keys deactivated and deleted
+- `iam-admin` break-glass IAM user created — console-only, MFA-enabled, credentials stored offline (see [ADR-010](../adr/adr-010-break-glass-access.md))
+- Bootstrap IAM admin user deleted
 
 ---
 

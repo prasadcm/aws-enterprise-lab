@@ -20,22 +20,25 @@ Phase 004
 Organization Governance - Organization import - SCP framework - Tag policies - Budgets
 
 Phase 005
-Identity Center as Code - Permission sets - Assignments
+Identity Provider - Switch to Entra ID (SAML + SCIM)
 
 Phase 006
-Networking Foundation - Hub VPC - TGW - DNS
+Identity Center as Code - Permission sets - Assignments
 
 Phase 007
-Security Foundation - GuardDutys - Security Hub - Access Analyzer
+Networking Foundation - Hub VPC - TGW - DNS
 
 Phase 008
-Shared Services - Artifact repositories - CI/CD
+Security Foundation - GuardDuty - Security Hub - Access Analyzer
 
 Phase 009
-Workload Accounts - NonProd - Prod
+Shared Services - Artifact repositories - CI/CD
 
 Phase 010
-GitHub Actions OIDC - Terraform automation
+Workload Accounts - NonProd - Prod
 
 Phase 011
+GitHub Actions OIDC - Terraform automation
+
+Phase 012
 Observability - Logging - Metrics - Alarming
