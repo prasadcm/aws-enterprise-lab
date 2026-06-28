@@ -13,10 +13,6 @@ data "terraform_remote_state" "organization" {
   }
 }
 
-locals {
-  root_id = data.terraform_remote_state.organization.outputs.root_id
-}
-
 # --- Tag Policy (Audit Mode) ---
 # Defines the expected tag keys and allowed values across the Organization.
 # Audit mode reports non-compliant resources without blocking operations.
