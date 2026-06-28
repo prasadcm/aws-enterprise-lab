@@ -13,10 +13,6 @@ data "terraform_remote_state" "organization" {
   }
 }
 
-locals {
-  root_id = data.terraform_remote_state.organization.outputs.root_id
-}
-
 # --- Deny Leave Organization ---
 # Prevents any account from calling organizations:LeaveOrganization.
 # Attached to the Root so it applies to every account except the Management Account

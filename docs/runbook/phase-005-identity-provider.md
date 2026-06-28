@@ -462,4 +462,4 @@ periodically. To rotate:
 
 ## Next Phase
 
-Phase 006 — _(not yet planned)_
+[Phase 006 — Identity Foundation](./phase-006-identity-foundation.md)
